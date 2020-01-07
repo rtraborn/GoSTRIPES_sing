@@ -36,7 +36,7 @@ SAMPLE  = Pcaud_rep2
 GENOME_DIR  = ${BASEDIR}/PcGENOME
 GENOME_FILE = ${GENOME_DIR}/pcaud_mod.fa
 GENOME_GTF  = ${GENOME_DIR}/pcaud-full.gff
-RNAfile     = ${GENOME_DIR}/tet-rDNA.fa
+RNAfile     = ${GENOME_DIR}/ptet-rDNA.fa
 
 
 # Options for programs called in the GoSTRIPES workflow:
