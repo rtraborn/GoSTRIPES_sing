@@ -6,11 +6,13 @@
 #SBATCH -o slurm.%j.out
 #SBATCH -e slurm.%j.err
 
-myDir=/home/rraborn/scratch/GoSTRIPES_test_Pc/STRIPES_sing/Pc_STRIPE
+myDir=/home/rraborn/scratch/rraborn/STRIPEseq_files/GoSTRIPES_sing/STRIPES #update this
+sampleFolder=Pcaud_rep2 #update this
 
 module load singularity/2.6.0
 
-source /home/rraborn/mydevel/GoSTRIPES/bin/xworkStripes -b /home/rraborn/scratch/GoSTRIPES_test_Pc/STRIPES -i /home/rraborn/scratch/GoSTRIPES_test_Pc/STRIPES/gostripes.simg
+source /home/rraborn/scratch/rtraborn/myDevel/GoSTRIPES/bin/xworkStripes -b /home/rraborn/scratch/rtraborn/STRIPEseq_files/GoSTRIPES_Czo/STRIPES -i /home/rraborn/scratch/STRIPEseq_files/GoSTRIPES_Czo/STRIPES/gostripes.simg #update this
+
 
 echo "Launching job"
 

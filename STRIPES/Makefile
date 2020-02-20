@@ -21,7 +21,7 @@
 # system and preferences.
 
 BASEDIR  = ${CURDIR}/..
-RAWREAD1 = Caud_R1
+RAWREAD1 = Caud_R1 #update this
 RAWREAD2 = Caud_R2
 RAWREAD1FQ = ${BASEDIR}/downloads/${RAWREAD1}.fq
 RAWREAD2FQ = ${BASEDIR}/downloads/${RAWREAD2}.fq
@@ -29,7 +29,7 @@ RAWREAD2FQ = ${BASEDIR}/downloads/${RAWREAD2}.fq
 UMI     = NNNNNNNN
 LINKER  = TATAGGG
 PATTERN = ${UMI}${LINKER}
-SAMPLE  = Pcaud_rep2
+SAMPLE  = Pcaud_rep2 #update this
 
 # Genome file locations:
 

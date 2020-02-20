@@ -1,24 +1,23 @@
 #!/bin/bash
 
-#PBS -N PcSTRIPE_job
+#PBS -N CzSTRIPE_job
 #PBS -k o
-#PBS -l nodes=1:ppn=16,vmem=32gb
-#PBS -l walltime=24:00:00
+#PBS -l nodes=1:ppn=16,vmem=64gb
+#PBS -l walltime=8:00:00
 
-myDir=/N/dc2/scratch/rtraborn/GoSTRIPES_test_Pc/STRIPES/Pc_STRIPE
+myDir=/N/dc2/scratch/rtraborn/STRIPEseq_files/GoSTRIPES_sing/STRIPES #update this
+sampleFolder=Pcaud_rep2 #update this
 
 module load singularity
 
-source /N/dc2/scratch/rtraborn/mydevel/GoSTRIPES/bin/xworkStripes -b /N/dc2/scratch/rtraborn/GoSTRIPES_test_Pc/STRIPES -i /N/dc2/scratch/rtraborn/GoSTRIPES_test_Pc/STRIPES/gostripes.simg
+source /N/dc2/scratch/rtraborn/myDevel/GoSTRIPES/bin/xworkStripes -b /N/dc2/scratch/rtraborn/STRIPEseq_files/GoSTRIPES_Czo/STRIPES -i /N/dc2/scratch/rtraborn/STRIPEseq_files/GoSTRIPES_Czo/STRIPES/gostripes.simg #update this
 
 echo "Launching job"
 
-cd $myDir
+cd $myDir/$sampleFolder
 
 $rws make -n
 
 $rws make
-
-make $
 
 echo "Job complete"
