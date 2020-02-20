@@ -9,7 +9,7 @@
 myDir=/home/rraborn/scratch/rraborn/STRIPEseq_files/GoSTRIPES_sing/STRIPES #update this
 sampleFolder=Pcaud_rep2 #update this
 
-module load singularity/2.6.0
+module load singularity/3.3.0-1
 
 source /home/rraborn/scratch/rtraborn/myDevel/GoSTRIPES/bin/xworkStripes -b /home/rraborn/scratch/rtraborn/STRIPEseq_files/GoSTRIPES_Czo/STRIPES -i /home/rraborn/scratch/STRIPEseq_files/GoSTRIPES_Czo/STRIPES/gostripes.simg #update this
 
