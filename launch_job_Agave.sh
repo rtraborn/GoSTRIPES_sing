@@ -16,7 +16,7 @@ source /home/rraborn/scratch/rtraborn/myDevel/GoSTRIPES/bin/xworkStripes -b /hom
 
 echo "Launching job"
 
-cd $myDir
+cd $myDir/$sampleFolder
 
 $rws make -n
 
