@@ -1,0 +1,21 @@
+#!/bin/bash
+#
+
+R_PROFILE_USER=""
+R_LIBS="" 
+
+#Setting variables:
+#
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+source ${DIR}/../configfile
+
+wf=all
+
+if [ "$wf" == "all" ] ; then
+	${RSCRIPT} --vanilla --default-packages=methods,datasets,utils,grDevices,graphics,stats  STRIPEseq_wf1.Rscript > STRIPEseq_parawf1.output
+	${RSCRIPT} --default-packages=methods,datasets,utils,grDevices,graphics,stats  STRIPEseq_wf2.Rscript > STRIPEseq_parawf2.output
+	${RSCRIPT} --default-packages=methods,datasets,utils,grDevices,graphics,stats  STRIPEseq_wf3.Rscript > STRIPEseq_parawf3.output
+	${RSCRIPT} --default-packages=methods,datasets,utils,grDevices,graphics,stats  STRIPE_seqwf4.Rscript > STRIPEseq_parawf4.output
+else
+        ${RSCRIPT} --default-packages=methods,datasets,utils,grDevices,graphics,stats  ${EXPERIMENT}wf${wf}.Rscript > ${EXPERIMENT}wf${wf}.output
+fi

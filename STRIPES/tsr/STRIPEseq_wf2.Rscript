@@ -1,0 +1,766 @@
+loadWF1      <- 1
+
+
+# TSSthreshold (the number of tags per site for the site to be considered above
+#  the noise level) will be set automatically as the value that puts at least
+#  cTSSpfraction of such sites within annotated promoter regions
+#  (+/- max(pupstream,pdownstream) positions around annotate gene starts). In
+#  order not to bias the determination by large numbers of high coverage sites
+#  that are within annotated promoter regions, a secondary criterion is that
+#  sites with exactly TSSthreshold coverage should also be significantly
+#  enriched in promoter regions, at the lower fraction threshold of sTSSpfraction.
+#
+#  You can override the automatically calculated threshold value by editing
+#  the TSSthreshold line below to replace the -1 with desired threshold (e.g.,
+#  100 to look at very strongly supported TSSs).
+#
+cTSSpfraction <- 0.85
+sTSSpfraction <- 0.75
+TSSthreshold <- 8
+
+pdf("PdSTRIPEwf2.pdf")
+
+
+
+# Start the fun ...: 
+#
+library("TSRchitect")
+library("GenomicRanges")
+library("bumphunter")
+library("plotrix")
+library("dplyr")
+
+
+if (loadWF1) {
+  load("PdSTRIPE_2stepwf1.RData")
+} else {
+  source("PdSTRIPE_2stepwf1.Rscript")
+}
+debugme      <- 1
+verbose      <- 1
+cat (PdSTRIPE@title,"\tWorkflow 2\n")
+
+
+cat("\n\n##Exploring PdSTRIPE TSS data\n\n")
+if (debugme) {
+  cat("\n\nShowing the result of str(PdSTRIPE):\n\n")
+  str(PdSTRIPE)
+  cat("\n\nShowing the result of str(PdSTRIPE@tssCountData):\n\n")
+  str(PdSTRIPE@tssCountData)
+}
+
+tmpdf <- PdSTRIPE@tssCountData[[1]]
+if (debugme) {
+  cat("\n\nShowing the result of str(tmpdf):\n\n")
+  str(tmpdf)
+  cat("\nSequences in the genome:\n")
+  show(unique(tmpdf$seq))
+}
+
+# tmpdf includes read mappings to the cholorplast and mitochondrial genomes; these
+#  data points will be eliminated:
+#
+cat("\nNumber of TSSs identified by mapping:\t",
+	dim(tmpdf)[1],"\n")
+cat("Number of TSSs called on the chloroplast genome:\t",
+	dim(tmpdf[tmpdf$seq == "ChrC",])[1],"\n")
+cat("Number of TSSs called on the mitochondrial genome:\t",
+	dim(tmpdf[tmpdf$seq == "ChrM",])[1],"\n")
+tmpdf <- tmpdf[tmpdf$seq != "ChrC" & tmpdf$seq != "ChrM",]
+cat("Number of TSSs called on the nuclear genome (subject to further analyses):\t",
+	dim(tmpdf)[1],"\n")
+rownames(tmpdf) <- seq_len(nrow(tmpdf))
+
+tmpdf$start <- tmpdf$TSS
+tmpdf$end   <- tmpdf$TSS
+tmpdf$score <- tmpdf$nTAGs
+if (debugme) {
+  cat("\n\nShowing the result of str(tmpdf):\n\n")
+  str(tmpdf)
+}
+
+TSSdf           <- tmpdf[, c("seq","start","end","strand","score")]
+colnames(TSSdf) <-    c("seqnames","start","end","strand","score")
+if (debugme) {
+  cat("\n\nShowing the result of str(TSSdf):\n\n")
+  str(TSSdf)
+}
+
+
+
+# TSSgr - GRanges object of TSS positions (ranges of width 1) and tag counts (score)
+#
+TSSgr <- makeGRangesFromDataFrame(TSSdf,keep.extra.columns=TRUE,ignore.strand=FALSE,
+		start.field="start",end.field="end",strand.field="strand")
+if (debugme) {
+  cat("\n\nShowing the result of str(TSSgr):\n\n")
+  str(TSSgr)
+}
+if (verbose) {
+  cat("\n\nTSSgr is a GRanges object of TSS positions (ranges of width 1) and ",
+	"tag counts (score):\n\n")
+  show(TSSgr)
+}
+
+
+
+# TSScounts - vector of TSS counts
+#
+TSScounts <- mcols(TSSgr)$score
+
+cat("\n\nNumber of distinct TSSs:\t",length(TSScounts))
+cat("\n\nQuantiles of TSScounts:\n\n")
+show(quantile(TSScounts,seq(0,100,2)/100))
+for (t in c(10,20,50,100,500,1000)) {
+  cat("\nNumber of TSSs with counts >= ",t,"\t",length(TSScounts[TSScounts >= t]))
+}
+cat("\n\n")
+hist(TSScounts[TSScounts >= 20 & TSScounts <=100],breaks=40,
+     main=paste("PdSTRIPE: TSS tag count histogram"),
+     xlab=paste("TSS tag count (showing range: 20-100)")
+    )
+
+
+# Now establishing the overlap of TSSs with PRMs:
+#
+overlapTSSwithPRM <- findOverlaps(TSSgr,PRMgr)
+if (debugme) {
+  cat("\n\nShowing str and head of overlapTSSwithPRM:\n\n")
+  str(overlapTSSwithPRM)
+  cat("\n")
+  show(head(overlapTSSwithPRM))
+}
+overlapTSSwithPRMdf <- as.data.frame(overlapTSSwithPRM)
+if (debugme) {
+  cat("\n\nShowing str and head of overlapTSSwithPRMdf:\n\n")
+  str(overlapTSSwithPRMdf)
+  cat("\n")
+  show(head(overlapTSSwithPRMdf))
+}
+
+# Adding the gene identifiers to the overlap matches (TSSs in promoters);
+#
+TSSdf$featureID <- rep(NA_character_,length=dim(TSSdf)[1])
+TSSdf$featureID[overlapTSSwithPRMdf$queryHits] <-
+	mcols(PRMgr)$ID[overlapTSSwithPRMdf$subjectHits]
+if (debugme) {
+  cat("\n\nShowing str and head of annotated TSSdf:\n\n")
+  str(TSSdf)
+  cat("\n")
+  head(TSSdf)
+}
+
+cat("\nNote: In the following, promoter regions are defined as +/- ",pwindow,
+	" of annotated gene starts (", round(100*prmfraction,2), "% of genome)\n\n")
+
+cat("\nNumber of TSSs with counts >= ",1,"anywhere        :\t",
+    dim(TSSdf)[1])
+cat("\nNumber of TSSs with counts >= ",1,"    in promoters:\t",
+    dim(TSSdf[!is.na(TSSdf$featureID),])[1],
+    "\t",
+    round(100*dim(TSSdf[!is.na(TSSdf$featureID),])[1]/dim(TSSdf)[1],2),
+    "%\t(ratio relative to genomic segment fraction:\t",
+    round((dim(TSSdf[!is.na(TSSdf$featureID),])[1]/dim(TSSdf)[1])/prmfraction,2), ")"
+   )
+cat("\nNumber of TSSs with counts >= ",1,"not in promoters:\t",
+    dim(TSSdf[is.na(TSSdf$featureID),])[1],
+    "\t",
+    round(100*dim(TSSdf[is.na(TSSdf$featureID),])[1]/dim(TSSdf)[1],2),
+    "%"
+   )
+cat("\n")
+
+
+# Make TSSgr again to add the featureID field:
+#
+TSSgr <- makeGRangesFromDataFrame(TSSdf,keep.extra.columns=TRUE,
+               ignore.strand=FALSE,start.field="start",end.field="end",
+               strand.field="strand")
+if (debugme) {
+  cat("\n\nShowing the result of str(TSSgr):\n\n")
+  str(TSSgr)
+}
+
+
+# Annotate the data mapping TSSs to their nearest PRM:
+#
+aTSSdf <- annotateNearest(TSSgr,PRMgr)
+if (debugme) {
+  cat("\n\nShowing the result of str(aTSSdf):\n\n")
+  str(aTSSdf)
+}
+
+save.image("Debug_f2_aTSSdf.Rdata")
+
+# Let's keep everything in one place and add the promoter coordinates to the aTSSdf dataframe,
+# as well as the TSS properties of location, gene, and tag count :
+#
+aTSSdf <- cbind(aTSSdf, DataFrame(start=start(PRMgr[aTSSdf$subjectHits]@ranges),
+				end=end(PRMgr[aTSSdf$subjectHits]@ranges),
+				strand=as.vector(PRMgr[aTSSdf$subjectHits]@strand)))
+aTSSdf <- cbind(aTSSdf, DataFrame(seqnames=as.vector(TSSgr@seqnames),
+				tss=start(TSSgr@ranges),
+				featureID=TSSgr$featureID,tagCount=TSSgr$score))
+if (debugme) {
+  cat("\n\nShowing the result of str(aTSSdf):\n\n")
+  str(aTSSdf)
+}
+
+# distance == 0 are the TSSs that fall within the promoter regions; for distance > 0, the nearest
+#  promoter region is downstream; for distance < 0, the nearest promoter region is downstream.
+#
+cat("\nNumber of TSSs with counts >= ",1,"with nearest promoter downstream:\t",
+    dim(aTSSdf[aTSSdf$distance > 0,])[1],
+    "\t",
+    round(100*dim(aTSSdf[aTSSdf$distance > 0,])[1]/dim(aTSSdf)[1],2),
+    "%"
+   )
+cat("\nNumber of TSSs with counts >= ",1,"within the nearest promoter     :\t",
+    dim(aTSSdf[aTSSdf$distance == 0,])[1],
+    "\t",
+    round(100*dim(aTSSdf[aTSSdf$distance == 0,])[1]/dim(aTSSdf)[1],2),
+    "%"
+   )
+cat("\nNumber of TSSs with counts >= ",1,"with nearest promoter upstream  :\t",
+    dim(aTSSdf[aTSSdf$distance < 0,])[1],
+    "\t",
+    round(100*dim(aTSSdf[aTSSdf$distance < 0,])[1]/dim(aTSSdf)[1],2),
+    "%"
+   )
+
+# We are particularly interested in the position of the TSS within its promoter region.  Thus,
+#  we select only the TSSs that fall within a promoter region.  Then we transfrom the inside
+#  distance to the conventional notation: -pwindow to -1 are positions upstream of the annotated
+#  gene start at +1; positions within the annotated gene are numbered with positive numbers.
+#
+TSSinPRMdf <- aTSSdf[aTSSdf$distance == 0,]
+TSSinPRMdf$pdist <- NULL
+TSSinPRMdf$pdist[TSSinPRMdf$insideDist >  0] <- -pwindow +
+						TSSinPRMdf$insideDist[TSSinPRMdf$insideDist >  0]
+TSSinPRMdf$pdist[TSSinPRMdf$insideDist <= 0] <-  pwindow +
+						TSSinPRMdf$insideDist[TSSinPRMdf$insideDist <= 0]
+TSSinPRMdf$pdist[TSSinPRMdf$strand == "-"]   <-          -
+						TSSinPRMdf$pdist[TSSinPRMdf$strand == "-"]
+if (debugme) {
+  cat("\n\nShowing the result of str(TSSinPRMdf):\n\n")
+  str(TSSinPRMdf)
+}
+
+# Plotting the histogram of pdist value; we expect a peak at +1, corresponding to the annotated
+#  gene start:
+#
+hist(TSSinPRMdf$pdist,breaks=2*pwindow,
+     main=paste("PdSTRIPE: Histogram of TSS within-promoter distances"),
+     xlab=paste("Distance of TSS to closest annotated mRNA 5'-end")
+    )
+hist(TSSinPRMdf$pdist,breaks=2*pwindow,freq=FALSE,ylim=c(0,0.02),
+     main=paste("PdSTRIPE: Histogram of TSS within-promoter distances"),
+     xlab=paste("Distance of TSS to closest annotated mRNA 5'-end")
+    )
+
+
+# Now we plot the fraction of TSSs occurring in the annotated promoter regions. We expect
+#  most of the "real" TSSs to be in the promoter regions (if we trust the current gene
+#  annotation ...), but noise events should be anywhere in the genome.  There should be a
+#  bia for high-count TSSs to be more often associated with annotated promoter regions. Let's
+#  plot the fraction of within-promoter TSSs as a function of TSS tag count:
+#
+cinsidecount   <- NULL
+coutsidecount  <- NULL
+cinoutfraction <- NULL
+sinsidecount   <- NULL
+soutsidecount  <- NULL
+sinoutfraction <- NULL
+for (n in seq(1,150,1)) {
+  sinsidecount[n]   <- dim(aTSSdf[aTSSdf$type == "inside" & aTSSdf$tagCount == n,])[1]
+  soutsidecount[n]  <- dim(aTSSdf[aTSSdf$type != "inside" & aTSSdf$tagCount == n,])[1]
+  sinoutfraction[n] <- sinsidecount[n]/(sinsidecount[n]+soutsidecount[n])
+  cinsidecount[n]   <- dim(aTSSdf[aTSSdf$type == "inside" & aTSSdf$tagCount >= n,])[1]
+  coutsidecount[n]  <- dim(aTSSdf[aTSSdf$type != "inside" & aTSSdf$tagCount >= n,])[1]
+  cinoutfraction[n] <- cinsidecount[n]/(cinsidecount[n]+coutsidecount[n])
+}
+
+if (TSSthreshold < 1) {
+#
+# We use the plot to determine the threshold for non-noise TSSs as the minimal count that
+#  puts at least 100*TSSpfraction % of TSSs into known promoter regions:
+#
+  cpf <- approx(x=cinoutfraction[],y=seq(1,150,1),xout=cTSSpfraction,tie=min)
+  spf <- approx(x=sinoutfraction[],y=seq(1,150,1),xout=sTSSpfraction,tie=min)
+  TSSthreshold <- ceiling(cpf$y)
+
+#... but going a bit higher because we want the lowest above threshold tag count
+#sites also to be enriched, at least above the sTSSpfraction level:
+#
+  cTSSthreshold <- TSSthreshold
+  while (sinoutfraction[TSSthreshold] < sTSSpfraction) {
+    TSSthreshold <- TSSthreshold + 1
+  }
+  cat("\n\nThreshold tag count for TSSs to be at least",100*spf$x,
+           "% (on average >= ",100*cpf$x,
+           "%) in annotated promoter regions:\t",TSSthreshold,"\n")
+
+#Let's show the plot and determination:
+#
+  plot(seq(1,150,1),sinoutfraction,ylim=c(0.1,1.0),
+	main="PdSTRIPE: Determination of (good)TSS tag count threshold",
+	xlab="TSS tag count",
+	ylab="Fraction of TSS within annotated promoters")
+    lines(seq(1,150,1),cinoutfraction,col="black",lty=1)
+    lines(c(0,cTSSthreshold),c(cTSSpfraction,cTSSpfraction),col="blue",lty=2)
+    lines(c(cTSSthreshold,cTSSthreshold),c(0,cTSSpfraction),col="blue",lty=2)
+    lines(c(0,TSSthreshold),c(sTSSpfraction,sTSSpfraction),col="red",lty=2)
+    lines(c(TSSthreshold,TSSthreshold),c(0,sTSSpfraction),col="red",lty=2)
+    text(TSSthreshold+2,0.4,paste("Threshold: ",TSSthreshold),pos=4)
+
+#
+# Ok, that's settled.  Now on to defining and exploring "strong" TSSs:
+#
+#
+  cat("\n\n\nExploring other values around ",TSSthreshold," tag counts for 'good' TSS determination:\n\n")
+  minT <- 1
+  maxT <- 2 * TSSthreshold
+  for (t in seq(minT,maxT)) {
+    TSSdfSelected <- TSSdf[TSSdf$score == t,]
+    cat("\nNumber of TSSs with counts == ",t,"anywhere        :\t",
+        dim(TSSdfSelected)[1])
+    cat("\nNumber of TSSs with counts == ",t,"    in promoters:\t",
+        dim(TSSdfSelected[!is.na(TSSdfSelected$featureID),])[1],
+        "\t",
+        round(100*dim(TSSdfSelected[!is.na(TSSdfSelected$featureID),])[1]/dim(TSSdfSelected)[1],2),
+        "%\t(ratio relative to genomic segment fraction:\t",
+        round((dim(TSSdfSelected[!is.na(TSSdfSelected$featureID),])[1]/dim(TSSdfSelected)[1])/prmfraction,2), ")"
+       )
+    cat("\nNumber of TSSs with counts == ",t,"not in promoters:\t",
+        dim(TSSdfSelected[is.na(TSSdfSelected$featureID),])[1],
+        "\t",
+        round(100*dim(TSSdfSelected[is.na(TSSdfSelected$featureID),])[1]/dim(TSSdfSelected)[1],2),
+        "%"
+       )
+
+    TSSdfSelected <- TSSdf[TSSdf$score >= t,]
+    cat("\nNumber of TSSs with counts >= ",t,"anywhere        :\t",
+        dim(TSSdfSelected)[1])
+    cat("\nNumber of TSSs with counts >= ",t,"    in promoters:\t",
+        dim(TSSdfSelected[!is.na(TSSdfSelected$featureID),])[1],
+        "\t",
+        round(100*dim(TSSdfSelected[!is.na(TSSdfSelected$featureID),])[1]/dim(TSSdfSelected)[1],2),
+        "%\t(ratio relative to genomic segment fraction:\t",
+        round((dim(TSSdfSelected[!is.na(TSSdfSelected$featureID),])[1]/dim(TSSdfSelected)[1])/prmfraction,2), ")"
+       )
+    cat("\nNumber of TSSs with counts >= ",t,"not in promoters:\t",
+        dim(TSSdfSelected[is.na(TSSdfSelected$featureID),])[1],
+        "\t",
+        round(100*dim(TSSdfSelected[is.na(TSSdfSelected$featureID),])[1]/dim(TSSdfSelected)[1],2),
+        "%"
+       )
+    cat("\n")
+  }
+}
+
+
+#The essential summary:
+#
+cat("\n\n\nUsing a threshold of ",TSSthreshold," tag counts for 'good' TSS determination:\n\n")
+TSSdfGood <- TSSdf[TSSdf$score >= TSSthreshold,]
+
+cat("\nNumber of TSSs with counts >= ",TSSthreshold,"anywhere        :\t",
+    dim(TSSdfGood)[1])
+cat("\nNumber of TSSs with counts >= ",TSSthreshold,"    in promoters:\t",
+    dim(TSSdfGood[!is.na(TSSdfGood$featureID),])[1],
+    "\t",
+    round(100*dim(TSSdfGood[!is.na(TSSdfGood$featureID),])[1]/dim(TSSdfGood)[1],2),
+    "%\t(ratio relative to genomic segment fraction:\t",
+    round((dim(TSSdfGood[!is.na(TSSdfGood$featureID),])[1]/dim(TSSdfGood)[1])/prmfraction,2), ")"
+   )
+cat("\nNumber of TSSs with counts >= ",TSSthreshold,"not in promoters:\t",
+    dim(TSSdfGood[is.na(TSSdfGood$featureID),])[1],
+    "\t",
+    round(100*dim(TSSdfGood[is.na(TSSdfGood$featureID),])[1]/dim(TSSdfGood)[1],2),
+    "%"
+   )
+cat("\n")
+
+
+# Ok, now let's focus on strong TSS sites and see how they match up with
+#  promoter regions.
+#
+TSSgrGood <- makeGRangesFromDataFrame(TSSdfGood,keep.extra.columns=TRUE,
+               ignore.strand=FALSE,start.field="start",end.field="end",
+               strand.field="strand")
+
+# Find the distance of each strong TSS to its nearest promoter region:
+#
+aTSSdf <- annotateNearest(TSSgrGood,PRMgr)
+
+# Let's keep everything in one place and add the promoter coordinates to the aTSSdf dataframe,
+# as well as the TSS properties of location, gene, and tag count :
+#
+aTSSdf <- cbind(aTSSdf, DataFrame(start=start(PRMgr[aTSSdf$subjectHits]@ranges),
+				end=end(PRMgr[aTSSdf$subjectHits]@ranges),
+				strand=as.vector(PRMgr[aTSSdf$subjectHits]@strand)))
+aTSSdf <- cbind(aTSSdf, DataFrame(seqnames=as.vector(TSSgrGood@seqnames),
+				tss=start(TSSgrGood@ranges),
+				featureID=TSSgrGood$featureID,tagCount=TSSgrGood$score))
+
+# distance == 0 are the TSSs that fall within the promoter regions; for distance > 0, the nearest
+#  promoter region is downstream; for distanc < 0, the nearest promoter region is downstream.
+#
+cat("\nNumber of TSSs with counts >= ",TSSthreshold,"with nearest promoter downstream:\t",
+    dim(aTSSdf[aTSSdf$distance > 0,])[1],
+    "\t",
+    round(100*dim(aTSSdf[aTSSdf$distance > 0,])[1]/dim(aTSSdf)[1],2),
+    "%"
+   )
+cat("\nNumber of TSSs with counts >= ",TSSthreshold,"within the nearest promoter     :\t",
+    dim(aTSSdf[aTSSdf$distance == 0,])[1],
+    "\t",
+    round(100*dim(aTSSdf[aTSSdf$distance == 0,])[1]/dim(aTSSdf)[1],2),
+    "%"
+   )
+cat("\nNumber of TSSs with counts >= ",TSSthreshold,"with nearest promoter upstream  :\t",
+    dim(aTSSdf[aTSSdf$distance < 0,])[1],
+    "\t",
+    round(100*dim(aTSSdf[aTSSdf$distance < 0,])[1]/dim(aTSSdf)[1],2),
+    "%"
+   )
+cat("\n")
+
+# We are particularly interested in the position of the TSS within its promoter region.  Thus,
+#  we select only the TSSs that fall within a promoter region.  Then we transfrom the inside
+#  distance to the conventional notation: -pwindow to -1 are positions upstream of the annotated
+#  gene start at +1; positions within the annotated gene are numbered with positive numbers.
+#
+TSSinPRMdf <- aTSSdf[aTSSdf$distance == 0,]
+TSSinPRMdf$pdist <- NULL
+TSSinPRMdf$pdist[TSSinPRMdf$insideDist >  0] <- -pwindow +
+						TSSinPRMdf$insideDist[TSSinPRMdf$insideDist >  0]
+TSSinPRMdf$pdist[TSSinPRMdf$insideDist <= 0] <-  pwindow +
+						TSSinPRMdf$insideDist[TSSinPRMdf$insideDist <= 0]
+TSSinPRMdf$pdist[TSSinPRMdf$strand == "-"]   <-          -
+						TSSinPRMdf$pdist[TSSinPRMdf$strand == "-"]
+
+# Plotting the histogram of pdist value; we expect a peak at +1, corresponding to the annotated
+#  gene start:
+#
+hist(TSSinPRMdf$pdist,breaks=2*pwindow,
+     main=paste("PdSTRIPE: Histogram of (good)TSS within-promoter distances"),
+     xlab=paste("Distance of TSS to closest annotated mRNA 5'-end")
+    )
+hist(TSSinPRMdf$pdist,breaks=2*pwindow,freq=FALSE,ylim=c(0,0.025),
+     main=paste("PdSTRIPE: Histogram of (good)TSS within-promoter distances"),
+     xlab=paste("Distance of TSS to closest annotated mRNA 5'-end")
+    )
+
+
+# We should address the problem of distances betweeen above threshold TSSs.  TSSs in "close"
+#  succession should be merged into TSRs.  But what are we to consider "close"?
+#
+# Plotting nearest neighbor distances between the above-threshold TSSs might help set the
+#  clustering distance (20-40) for putting TSSs into TSRs.  We expect an exponential
+#  distribution favoring close distances corresponding to clusters in promoters.
+
+par(mfrow=c(3,1),oma=c(0,0,2,0))
+
+# First, plot the distribution of distances from all TSSs:
+#
+dtss <- NULL
+for (n in as.vector(TSSgrGood@seqnames@values) ) {
+  x <- start(TSSgrGood@ranges[as.vector(TSSgrGood@seqnames) == n & as.vector(TSSgrGood@strand) == "+",])
+  dtss <- append(dtss,diff(x))
+  x <- start(TSSgrGood@ranges[as.vector(TSSgrGood@seqnames) == n & as.vector(TSSgrGood@strand) == "-",])
+  dtss <- append(dtss,diff(x))
+}
+hist(dtss[dtss>= 1 & dtss<=60],breaks=60,freq=FALSE,ylim=c(0,0.75),
+	main="All TSSs, independent of genomic position",xlab="nearest neighbor distance (<= 60)")
+mtext("PdSTRIPE: Nearest neighbor (good)TSS distances",outer=TRUE)
+
+# Let's all print out the quantiles of the distribution:
+#
+cat("\n\nQuantiles of nearest-neighbor distances between (good)TSSs:\n\n")
+show(quantile(dtss,seq(0,100,2)/100))
+cat("\n\n")
+
+
+# Now, let's look at TSSs in annotated promoter regions only:
+#
+dtss <- NULL
+for (n in as.vector(TSSgrGood@seqnames@values) ) {
+  x <- start(TSSgrGood@ranges[!is.na(TSSgrGood$featureID) & as.vector(TSSgrGood@seqnames) == n & as.vector(TSSgrGood@strand) == "+",])
+  dtss <- append(dtss,diff(x))
+  x <- start(TSSgrGood@ranges[!is.na(TSSgrGood$featureID) & as.vector(TSSgrGood@seqnames) == n & as.vector(TSSgrGood@strand) == "-",])
+  dtss <- append(dtss,diff(x))
+}
+hist(dtss[dtss>= 5 & dtss<=60],breaks=60,freq=FALSE,xlim=c(1,60),ylim=c(0,0.30),
+	main="TSSs within annotated promoter regions",xlab="nearest neighbor distances (between 5 and 60)")
+dtssI <- dtss[dtss>= 5 & dtss<=60]
+
+
+# And, TSSs not in annotated promoter regions:
+#
+dtss <- NULL
+for (n in as.vector(TSSgrGood@seqnames@values) ) {
+  x <- start(TSSgrGood@ranges[is.na(TSSgrGood$featureID) & as.vector(TSSgrGood@seqnames) == n & as.vector(TSSgrGood@strand) == "+",])
+  dtss <- append(dtss,diff(x))
+  x <- start(TSSgrGood@ranges[is.na(TSSgrGood$featureID) & as.vector(TSSgrGood@seqnames) == n & as.vector(TSSgrGood@strand) == "-",])
+  dtss <- append(dtss,diff(x))
+}
+hist(dtss[dtss>= 5 & dtss<=60],breaks=60,freq=FALSE,xlim=c(1,60),ylim=c(0,0.30),
+	main="TSSs outside annotated promoter regions",xlab="nearest neighbor distances (between 5 and 60)")
+dtssO <- dtss[dtss>= 5 & dtss<=60]
+
+
+# Let's plot the latter two histograms side by side:
+#
+par(mfrow=c(1,1),oma=c(0,0,0,0))
+m <- multhist(list(dtssI,dtssO),breaks=55,freq=FALSE,ylim=c(0,0.30),
+	main="PdSTRIPE: (good)TSS nearest neighbor distances\nwithin/outside annotated promoter regions",
+	xlab="nearest neighbor distances (between 5 and 60)",cex.names=0.7)
+
+
+###The same for the weak TSSs:
+
+cat("\n\n\nUsing a threshold of ",TSSthreshold," tag counts for 'weak' TSS determination:\n\n")
+TSSdfWeak <- TSSdf[TSSdf$score < TSSthreshold,]
+
+cat("\nNumber of TSSs with counts < ",TSSthreshold,"anywhere        :\t",
+    dim(TSSdfWeak)[1])
+cat("\nNumber of TSSs with counts < ",TSSthreshold,"    in promoters:\t",
+    dim(TSSdfWeak[!is.na(TSSdfWeak$featureID),])[1],
+    "\t",
+    round(100*dim(TSSdfWeak[!is.na(TSSdfWeak$featureID),])[1]/dim(TSSdfWeak)[1],2),
+    "%\t(ratio relative to genomic segment fraction:\t",
+    round((dim(TSSdfWeak[!is.na(TSSdfWeak$featureID),])[1]/dim(TSSdfWeak)[1])/prmfraction,2), ")"
+   )
+cat("\nNumber of TSSs with counts < ",TSSthreshold,"not in promoters:\t",
+    dim(TSSdfWeak[is.na(TSSdfWeak$featureID),])[1],
+    "\t",
+    round(100*dim(TSSdfWeak[is.na(TSSdfWeak$featureID),])[1]/dim(TSSdfWeak)[1],2),
+    "%"
+   )
+cat("\n")
+
+
+# Ok, now let's focus on weak TSS sites and see how they match up with
+#  promoter regions.
+#
+TSSgrWeak <- makeGRangesFromDataFrame(TSSdfWeak,keep.extra.columns=TRUE,
+               ignore.strand=FALSE,start.field="start",end.field="end",
+               strand.field="strand")
+
+# Find the distance of each weak TSS to its nearest promoter region:
+#
+awTSSdf <- annotateNearest(TSSgrWeak,PRMgr)
+
+# Let's keep everything in one place and add the promoter coordinates to the awTSSdf dataframe,
+# as well as the TSS properties of location, gene, and tag count :
+#
+awTSSdf <- cbind(awTSSdf, DataFrame(start=start(PRMgr[awTSSdf$subjectHits]@ranges),
+				end=end(PRMgr[awTSSdf$subjectHits]@ranges),
+				strand=as.vector(PRMgr[awTSSdf$subjectHits]@strand)))
+awTSSdf <- cbind(awTSSdf, DataFrame(seqnames=as.vector(TSSgrWeak@seqnames),
+				tss=start(TSSgrWeak@ranges),
+				featureID=TSSgrWeak$featureID,tagCount=TSSgrWeak$score))
+
+# distance == 0 are the TSSs that fall within the promoter regions; for distance > 0, the nearest
+#  promoter region is downstream; for distanc < 0, the nearest promoter region is downstream.
+#
+cat("\nNumber of TSSs with counts < ",TSSthreshold,"with nearest promoter downstream:\t",
+    dim(awTSSdf[awTSSdf$distance > 0,])[1],
+    "\t",
+    round(100*dim(awTSSdf[awTSSdf$distance > 0,])[1]/dim(awTSSdf)[1],2),
+    "%"
+   )
+cat("\nNumber of TSSs with counts < ",TSSthreshold,"within the nearest promoter     :\t",
+    dim(awTSSdf[awTSSdf$distance == 0,])[1],
+    "\t",
+    round(100*dim(awTSSdf[awTSSdf$distance == 0,])[1]/dim(awTSSdf)[1],2),
+    "%"
+   )
+cat("\nNumber of TSSs with counts < ",TSSthreshold,"with nearest promoter upstream  :\t",
+    dim(awTSSdf[awTSSdf$distance < 0,])[1],
+    "\t",
+    round(100*dim(awTSSdf[awTSSdf$distance < 0,])[1]/dim(awTSSdf)[1],2),
+    "%"
+   )
+cat("\n")
+
+# We are particularly interested in the position of the TSS within its promoter region.  Thus,
+#  we select only the TSSs that fall within a promoter region.  Then we transfrom the inside
+#  distance to the conventional notation: -pwindow to -1 are positions upstream of the annotated
+#  gene start at +1; positions within the annotated gene are numbered with positive numbers.
+#
+TSSinPRMdf <- awTSSdf[awTSSdf$distance == 0,]
+TSSinPRMdf$pdist <- NULL
+TSSinPRMdf$pdist[TSSinPRMdf$insideDist >  0] <- -pwindow +
+						TSSinPRMdf$insideDist[TSSinPRMdf$insideDist >  0]
+TSSinPRMdf$pdist[TSSinPRMdf$insideDist <= 0] <-  pwindow +
+						TSSinPRMdf$insideDist[TSSinPRMdf$insideDist <= 0]
+TSSinPRMdf$pdist[TSSinPRMdf$strand == "-"]   <-          -
+						TSSinPRMdf$pdist[TSSinPRMdf$strand == "-"]
+
+# Plotting the histogram of pdist value; we expect a peak at +1, corresponding to the annotated
+#  gene start:
+#
+hist(TSSinPRMdf$pdist,breaks=2*pwindow,
+     main=paste("PdSTRIPE: Histogram of (weak)TSS within-promoter distances"),
+     xlab=paste("Distance of TSS to closest annotated mRNA 5'-end")
+    )
+hist(TSSinPRMdf$pdist,breaks=2*pwindow,freq=FALSE,ylim=c(0,0.025),
+     main=paste("PdSTRIPE: Histogram of (weak)TSS within-promoter distances"),
+     xlab=paste("Distance of TSS to closest annotated mRNA 5'-end")
+    )
+
+
+# We should address the problem of distances betweeen above threshold TSSs.  TSSs in "close"
+#  succession should be merged into TSRs.  But what are we to consider "close"?
+#
+# Plotting nearest neighbor distances between the above-threshold TSSs might help set the
+#  clustering distance (20-40) for putting TSSs into TSRs.  We expect an exponential
+#  distribution favoring close distances corresponding to clusters in promoters.
+
+par(mfrow=c(3,1),oma=c(0,0,2,0))
+
+# First, plot the distribution of distances from all TSSs:
+#
+dtss <- NULL
+for (n in as.vector(TSSgrWeak@seqnames@values) ) {
+  x <- start(TSSgrWeak@ranges[as.vector(TSSgrWeak@seqnames) == n & as.vector(TSSgrWeak@strand) == "+",])
+  dtss <- append(dtss,diff(x))
+  x <- start(TSSgrWeak@ranges[as.vector(TSSgrWeak@seqnames) == n & as.vector(TSSgrWeak@strand) == "-",])
+  dtss <- append(dtss,diff(x))
+}
+hist(dtss[dtss>= 1 & dtss<=60],breaks=60,freq=FALSE,ylim=c(0,0.75),
+	main="All TSSs, independent of genomic position",xlab="Nearest neighbor distance (<= 60)")
+mtext("PdSTRIPE: Nearest neighbor (weak)TSS distances",outer=TRUE)
+
+# Let's all print out the quantiles of the distribution:
+#
+cat("\n\nQuantiles of nearest-neighbor distances between (weak)TSSs:\n\n")
+show(quantile(dtss,seq(0,100,2)/100))
+cat("\n\n")
+
+
+# Now, let's look at TSSs in annotated promoter regions only:
+#
+dtss <- NULL
+for (n in as.vector(TSSgrWeak@seqnames@values) ) {
+  x <- start(TSSgrWeak@ranges[!is.na(TSSgrWeak$featureID) & as.vector(TSSgrWeak@seqnames) == n & as.vector(TSSgrWeak@strand) == "+",])
+  dtss <- append(dtss,diff(x))
+  x <- start(TSSgrWeak@ranges[!is.na(TSSgrWeak$featureID) & as.vector(TSSgrWeak@seqnames) == n & as.vector(TSSgrWeak@strand) == "-",])
+  dtss <- append(dtss,diff(x))
+}
+hist(dtss[dtss>= 5 & dtss<=60],breaks=60,freq=FALSE,xlim=c(1,60),ylim=c(0,0.30),
+	main="(weak)TSSs within annotated promoter regions",xlab="Nearest neighbor distances (between 5 and 60)")
+dtssI <- dtss[dtss>= 5 & dtss<=60]
+
+
+# And, TSSs not in annotated promoter regions:
+#
+dtss <- NULL
+for (n in as.vector(TSSgrWeak@seqnames@values) ) {
+  x <- start(TSSgrWeak@ranges[is.na(TSSgrWeak$featureID) & as.vector(TSSgrWeak@seqnames) == n & as.vector(TSSgrWeak@strand) == "+",])
+  dtss <- append(dtss,diff(x))
+  x <- start(TSSgrWeak@ranges[is.na(TSSgrWeak$featureID) & as.vector(TSSgrWeak@seqnames) == n & as.vector(TSSgrWeak@strand) == "-",])
+  dtss <- append(dtss,diff(x))
+}
+hist(dtss[dtss>= 5 & dtss<=60],breaks=60,freq=FALSE,xlim=c(1,60),ylim=c(0,0.30),
+	main="(weak)TSSs outside annotated promoter regions",xlab="Nearest neighbor distances (between 5 and 60)")
+dtssO <- dtss[dtss>= 5 & dtss<=60]
+
+
+# Let's plot the latter two histograms side by side:
+#
+par(mfrow=c(1,1),oma=c(0,0,0,0))
+m <- multhist(list(dtssI,dtssO),breaks=55,freq=FALSE,ylim=c(0,0.30),
+	main="PdSTRIPE: (weak)TSS nearest neighbor distances\nwithin/outside annotated promoter regions",
+	xlab="Nearest neighbor distances (between 5 and 60)",cex.names=0.7)
+
+
+# Time to explore TSRs. The TSS distance plots suggest closer clustering of TSSs in known promoter
+#  regions compares to TSSs elsewhere and indicate that about 70% of TSSs have their nearest neighbor
+#  within 1 to 10-40 nucleotides. Let's determine the number of TSRs for clustDist values between 10
+#  and 40:
+#
+nTSR  <- NULL
+mTSRw <- NULL
+xTSRw <- NULL
+mTSRc <- NULL
+xTSRc <- NULL
+minD <- 10
+maxD <- 40
+for (n in seq(minD,maxD,by=5)) {
+  PdSTRIPE <- determineTSR(experimentName=PdSTRIPE, n.cores=1, tssSetType="replicates", tssSet="1",
+			tagCountThreshold=TSSthreshold, clustDist=n, writeTable=FALSE, mixedorder=FALSE)
+  tsrD   <- PdSTRIPE@tsrData[[1]]
+  i        <- n-minD+1
+  nTSR[i]  <- dim(tsrD)[1]
+  mTSRw[i] <- median(as.numeric(tsrD$tsrWdth))
+  xTSRw[i] <- max(as.numeric(tsrD$tsrWdth))
+  mTSRc[i] <- median(as.numeric(tsrD$nTAGs))
+  xTSRc[i] <- max(as.numeric(tsrD$nTAGs))
+}
+tab <- cbind(seq(minD,maxD),nTSR,mTSRw,xTSRw,mTSRc,xTSRc)
+cat("\nTSR numbers as a function of the clustDist parameter:\n\n")
+write.table(tab,"",quote=FALSE,row.names=FALSE,
+		col.names=c("clustDist","nTSR","medWidth","maxWidth","medTSScnt","maxTSScnt"))
+
+#Let's look at clustDist 20,30,40 in more detail:
+#
+cat("\n\nDetails for select values of the clustDist parameter:\n")
+PdSTRIPE <- determineTSR(experimentName=PdSTRIPE, n.cores=1, tssSetType="replicates", tssSet="1",
+			tagCountThreshold=TSSthreshold, clustDist=20, writeTable=FALSE, mixedorder=FALSE)
+w      <- as.numeric(PdSTRIPE@tsrData[[1]]$tsrWdth)
+c      <- as.numeric(PdSTRIPE@tsrData[[1]]$nTAGs)
+cat("\n\nclustDist = 20:\n")
+cat("\nNumber of TSRs:\t",length(w))
+cat("\nNumber of TSRs of width 1:\t",length(w[w==1]))
+cat("\nQuantiles of TSR width:\n")
+show(quantile(w,seq(0,100,2)/100))
+hist(w[w>1 & w<=400],breaks=400,freq=TRUE,right=FALSE,
+	main="PdSTRIPE: Histogram of TSR width for clustDist=20",xlab="TSRwidth (>1 & <= 400)"
+    )
+cat("\nQuantiles of numbers of TSS per TSR:\n")
+show(quantile(c,seq(0,100,2)/100))
+hist(c[c<=200],breaks=200,freq=TRUE,right=FALSE,
+	main="PdSTRIPE: Histogram of numbers of TSS counts per TSR for clustDist=20",xlab="TSScount (<= 200)"
+    )
+
+PdSTRIPE <- determineTSR(experimentName=PdSTRIPE, n.cores=1, tssSetType="replicates", tssSet="1",
+			tagCountThreshold=TSSthreshold, clustDist=30, writeTable=FALSE, mixedorder=FALSE)
+w      <- as.numeric(PdSTRIPE@tsrData[[1]]$tsrWdth)
+c      <- as.numeric(PdSTRIPE@tsrData[[1]]$nTAGs)
+cat("\n\nclustDist = 30:\n")
+cat("\nNumber of TSRs:\t",length(w))
+cat("\nNumber of TSRs of width 1:\t",length(w[w==1]))
+cat("\nQuantiles of TSR width:\n")
+show(quantile(w,seq(0,100,2)/100))
+hist(w[w>1 & w<=400],breaks=400,freq=TRUE,right=FALSE,
+	main="PdSTRIPE: Histogram of TSR width for clustDist=30",xlab="TSRwidth (>1 & <= 400)"
+    )
+cat("\nQuantiles of numbers of TSS per TSR:\n")
+show(quantile(c,seq(0,100,2)/100))
+hist(c[c<=200],breaks=200,freq=TRUE,right=FALSE,
+	main="PdSTRIPE: Histogram of numbers of TSS per TSR for clustDist=30",xlab="TSScount (<= 200)"
+    )
+
+PdSTRIPE <- determineTSR(experimentName=PdSTRIPE, n.cores=1, tssSetType="replicates", tssSet="1",
+			tagCountThreshold=TSSthreshold, clustDist=40, writeTable=FALSE, mixedorder=FALSE)
+w      <- as.numeric(PdSTRIPE@tsrData[[1]]$tsrWdth)
+c      <- as.numeric(PdSTRIPE@tsrData[[1]]$nTAGs)
+cat("\n\nclustDist = 40:\n")
+cat("\nNumber of TSRs:\t",length(w))
+cat("\nNumber of TSRs of width 1:\t",length(w[w==1]))
+cat("\nQuantiles of TSR width:\n")
+show(quantile(w,seq(0,100,2)/100))
+hist(w[w>1 & w<=400],breaks=400,freq=TRUE,right=FALSE,
+	main="PdSTRIPE: Histogram of TSR width for clustDist=40",xlab="TSRwidth (>1 & <= 400)"
+    )
+cat("\nQuantiles of numbers of TSS per TSR:\n")
+show(quantile(c,seq(0,100,2)/100))
+hist(c[c<=200],breaks=200,freq=TRUE,right=FALSE,
+	main="PdSTRIPE: Histogram of numbers of TSS per TSR for clustDist=40",xlab="TSScount (<= 200)"
+    )
+
+# ... save the data generated by the above for future reloading with the R load command:
+save.image(file="PdSTRIPE_2stepwf2.RData")

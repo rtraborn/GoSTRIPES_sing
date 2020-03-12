@@ -1,0 +1,39 @@
+loadWF3      <- 1
+
+
+# Start the fun ...: 
+#
+library("TSRchitect")
+library("dplyr")
+
+
+if (loadWF3) {
+  load("PdSTRIPE_2stepwf3.RData")
+} else {
+  source("PdSTRIPE_2stepwf3.Rscript")
+}
+cat (PdSTRIPE@title,"\tWorkflow 4\n")
+
+
+#Fine analyses:
+#
+cat("\n\n##Exploring particular genes:\n")
+options(width=1024)
+
+genesOfInterest <- c("gene6286","gene318")
+
+
+for (mygene in genesOfInterest) {
+  cat("\n\nShowing data for gene:\t",mygene,"\n\n")
+  
+  cat("Entry in GRanges object 'genes':\n")
+  show(genes[genes$ID == mygene,])
+  
+  cat("\n\nTSRs in the gene promoter region:\n")
+  tsr <- PdSTRIPE@tsrData[[1]]
+  show(BiocGenerics::subset(tsr, tsr$featureID == mygene))
+  
+  cat("\n\nTSSs in the gene promoter region as annotated in 'aTSSdf':\n")
+  mytssdf <- BiocGenerics::subset(aTSSdf, featureID == mygene)
+  print(as_tibble(mytssdf,ncol=14,width=Inf), n=Inf)
+}
