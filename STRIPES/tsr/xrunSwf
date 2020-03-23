@@ -6,8 +6,10 @@ R_LIBS=""
 
 #Setting variables:
 #
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-source ${DIR}/../configfile
+#DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+#source ${DIR}/../configfile
+
+RSCRIPT=~/genome_analysis/R-3.5.1/bin/Rscript #add your own path to Rscript here
 
 wf=all
 
